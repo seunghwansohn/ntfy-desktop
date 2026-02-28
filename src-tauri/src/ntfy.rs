@@ -2,10 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 use futures_util::StreamExt;
 use reqwest_eventsource::{EventSource, Event};
+
+#[cfg(target_os = "linux")]
+use std::process::Command;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NtfyMessage {
@@ -65,20 +69,30 @@ pub async fn subscribe(server_url: String, topic: String, app: AppHandle) -> Res
                                     let title = msg.title.clone().unwrap_or_else(|| format!("ntfy: {}", msg.topic));
                                     let body = msg.message.clone().unwrap_or_default();
 
-                                    // Tauri 표준 알림 플러그인 사용
-                                    // 1. 알림 ID로 정수형 값을 전달 (시간 기반 하위 32비트 사용)
-                                    // 2. 리눅스에서 팝업이 유지되도록 유도
-                                    let notification_id = (msg.time % (i32::MAX as i64)) as i32;
-
-                                    match app_clone.notification()
-                                        .builder()
-                                        .id(notification_id)
-                                        .title(&title)
-                                        .body(&body)
-                                        .show()
+                                    // 운영체제별 알림 분기 처리 (정공법)
+                                    #[cfg(target_os = "linux")]
                                     {
-                                        Ok(_) => println!("Notification sent to OS: {}", msg.id),
-                                        Err(e) => eprintln!("Notification error: {}", e),
+                                        // 우분투 GNOME의 알림 버그(옵션 추가 시 즉시 사라짐)를 회피하기 위해
+                                        // 어떠한 옵션(-a, -t 등)도 없는 가장 순수한 형태의 notify-send를 호출합니다.
+                                        let _ = Command::new("notify-send")
+                                            .arg(&title)
+                                            .arg(&body)
+                                            .spawn();
+                                        println!("Linux fallback (basic notify-send) triggered: {}", msg.id);
+                                    }
+
+                                    #[cfg(not(target_os = "linux"))]
+                                    {
+                                        // Windows/macOS는 Tauri의 기본 알림 플러그인에 맡김
+                                        match app_clone.notification()
+                                            .builder()
+                                            .title(&title)
+                                            .body(&body)
+                                            .show()
+                                        {
+                                            Ok(_) => println!("Tauri notification triggered: {}", msg.id),
+                                            Err(e) => eprintln!("Notification error: {}", e),
+                                        }
                                     }
 
                                     #[derive(Serialize, Clone)]
