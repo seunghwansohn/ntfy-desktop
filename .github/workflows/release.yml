@@ -34,13 +34,11 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
-      # 리눅스 빌드를 추가할 경우를 대비한 시스템 의존성 설치 세팅
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-24.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install Rust tauri-cli
+        run: cargo install tauri-cli@2.0.0 --locked
 
       - name: Install frontend dependencies
         run: npm install
@@ -50,11 +48,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # tauri.conf.json의 버전을 바탕으로 릴리즈 이름을 자동 생성합니다.
           tagName: v__VERSION__
           releaseName: 'ntfy-desktop v__VERSION__'
           releaseBody: '자동 빌드된 ntfy-desktop 릴리즈입니다.'
-          releaseDraft: true    # true로 하면 GitHub 릴리즈 페이지에 'Draft' 상태로 업로드되어, 확인 후 퍼블리시할 수 있습니다.
+          releaseDraft: true
           prerelease: false
-          # 빌드할 때 사용하는 인자 (필요 시 수정)
-          args: ${{ matrix.platform == 'windows-latest' && '--target x86_64-pc-windows-msvc' || '' }}
+          # npm run tauri 대신 글로벌에 설치된 cargo tauri를 사용하도록 지정
+          tauriScript: cargo tauri
+          args: --target x86_64-pc-windows-msvc
