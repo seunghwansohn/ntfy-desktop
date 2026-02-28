@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
-import { Send, Plus, Trash2, Bell, Server } from 'lucide-react';
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { Send, Plus, Trash2, Bell, Server, Zap } from 'lucide-react';
 
 interface NtfyMessage {
   id: string;
@@ -13,7 +13,7 @@ interface NtfyMessage {
   title?: string;
   tags?: string[];
   priority?: number;
-  serverUrl?: string; // 프론트엔드에서 필터링을 위해 백엔드에서 채워줌
+  serverUrl?: string;
 }
 
 interface FrontendMessage {
@@ -26,7 +26,6 @@ interface Subscription {
   topic: string;
 }
 
-// URL 끝의 슬래시를 제거하는 유틸리티
 const normalizeUrl = (url: string) => url.trim().replace(/\/+$/, '');
 
 function App() {
@@ -54,7 +53,6 @@ function App() {
 
   const selectedSubRef = useRef<Subscription | null>(selectedSub);
 
-  // 선택된 구독이 바뀔 때 ref 업데이트 및 안 읽음 카운트 초기화
   useEffect(() => {
     selectedSubRef.current = selectedSub;
     if (selectedSub) {
@@ -70,17 +68,14 @@ function App() {
     }
   }, [selectedSub]);
 
-  // 마운트 시 저장된 모든 구독에 대해 백엔드 구독 시작 및 알림 권한 요청
   useEffect(() => {
     const initApp = async () => {
-      // 1. 알림 권한 확인 및 요청
       let permission = await isPermissionGranted();
       if (!permission) {
         permission = await requestPermission() === 'granted';
       }
-      console.log('Notification permission:', permission);
-
-      // 2. 기존 구독 시작
+      console.log('Notification permission granted:', permission);
+      
       subscriptions.forEach((sub) => {
         invoke('subscribe', { 
           serverUrl: normalizeUrl(sub.serverUrl), 
@@ -93,23 +88,18 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 구독 목록 변경 시 로컬 스토리지 업데이트
   useEffect(() => {
     localStorage.setItem('ntfy-subscriptions', JSON.stringify(subscriptions));
   }, [subscriptions]);
 
-  // 백엔드로부터 실시간 메시지 수신 이벤트 리스너 등록
   useEffect(() => {
     const unlistenPromise = listen<FrontendMessage>('new-message', (event) => {
       const { server_url, message } = event.payload;
       const normalizedServerUrl = normalizeUrl(server_url);
-      
       const enrichedMessage = { ...message, serverUrl: normalizedServerUrl };
       
-      // 1. 전체 메시지 목록 업데이트
       setMessages((prev) => [enrichedMessage, ...prev]);
 
-      // 2. 안 읽음 카운트 처리
       const current = selectedSubRef.current;
       const isCurrentlyViewing = current && 
         normalizeUrl(current.serverUrl) === normalizedServerUrl && 
@@ -133,11 +123,7 @@ function App() {
     e.preventDefault();
     const topic = newTopic.trim();
     let serverUrl = normalizeUrl(newServerUrl);
-    
-    if (!serverUrl.startsWith('http')) {
-      serverUrl = `https://${serverUrl}`;
-    }
-
+    if (!serverUrl.startsWith('http')) serverUrl = `https://${serverUrl}`;
     if (!topic || !serverUrl) return;
 
     const exists = subscriptions.some(s => normalizeUrl(s.serverUrl) === serverUrl && s.topic === topic);
@@ -150,8 +136,7 @@ function App() {
       setSelectedSub(newSub);
       setNewTopic('');
     } catch (error) {
-      console.error('Subscription failed:', error);
-      alert(`구독에 실패했습니다: ${error}`);
+      alert(`구독 실패: ${error}`);
     }
   };
 
@@ -159,39 +144,38 @@ function App() {
     try {
       const serverUrl = normalizeUrl(subToRemove.serverUrl);
       await invoke('unsubscribe', { serverUrl, topic: subToRemove.topic });
-      
       const nextSubs = subscriptions.filter(
         (s) => !(normalizeUrl(s.serverUrl) === serverUrl && s.topic === subToRemove.topic)
       );
       setSubscriptions(nextSubs);
-      
       if (selectedSub && normalizeUrl(selectedSub.serverUrl) === serverUrl && selectedSub.topic === subToRemove.topic) {
         setSelectedSub(nextSubs.length > 0 ? nextSubs[0] : null);
       }
     } catch (error) {
-      console.error('Unsubscription failed:', error);
+      console.error(error);
     }
   };
 
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSub || !composeMessage.trim()) return;
-
     try {
       const baseUrl = normalizeUrl(selectedSub.serverUrl);
-      const response = await fetch(`${baseUrl}/${selectedSub.topic}`, {
-        method: 'POST',
-        body: composeMessage,
-      });
-      if (!response.ok) throw new Error('Network response was not ok');
+      await fetch(`${baseUrl}/${selectedSub.topic}`, { method: 'POST', body: composeMessage });
       setComposeMessage('');
     } catch (error) {
-      console.error('Publish failed:', error);
-      alert('메시지 전송에 실패했습니다. 서버 상태를 확인하세요.');
+      alert('전송 실패');
     }
   };
 
-  // 현재 선택된 토픽의 메시지만 필터링하여 표시
+  // 표준 알림 테스트 버튼 핸들러
+  const handleTestNotification = () => {
+    sendNotification({
+      title: 'ntfy-desktop 테스트',
+      body: '이 알림이 깜빡이지 않고 잘 보이나요?',
+    });
+  };
+
   const currentMessages = messages.filter(
     (m) => m.serverUrl === (selectedSub ? normalizeUrl(selectedSub.serverUrl) : '') && 
            m.topic === selectedSub?.topic
@@ -201,20 +185,29 @@ function App() {
     <div className="flex h-screen bg-gray-100 overflow-hidden text-gray-800 font-sans selection:bg-indigo-100">
       {/* Sidebar */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col shadow-sm z-20">
-        <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center gap-2 text-indigo-600 font-bold text-lg">
-          <Bell className="w-5 h-5 fill-current" />
-          ntfy-desktop
+        <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-2 text-indigo-600 font-bold text-lg">
+          <div className="flex items-center gap-2">
+            <Bell className="w-5 h-5 fill-current" />
+            ntfy-desktop
+          </div>
+          <button 
+            onClick={handleTestNotification}
+            className="p-1.5 hover:bg-indigo-100 rounded-full transition-colors text-indigo-400 group"
+            title="알림 테스트"
+          >
+            <Zap className="w-4 h-4 group-active:scale-90 transition-transform" />
+          </button>
         </div>
         
         <form onSubmit={handleAddTopic} className="p-4 border-b border-gray-200 flex flex-col gap-2 bg-gray-50/50">
-          <div className="flex items-center gap-2 bg-white px-3 py-2 border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all shadow-sm">
+          <div className="flex items-center gap-2 bg-white px-3 py-2 border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 shadow-sm transition-all">
              <Server className="w-4 h-4 text-gray-400 flex-shrink-0" />
              <input
               type="text"
               value={newServerUrl}
               onChange={(e) => setNewServerUrl(e.target.value)}
               placeholder="https://ntfy.sh"
-              className="flex-1 text-sm focus:outline-none w-full bg-transparent"
+              className="flex-1 text-sm focus:outline-none bg-transparent"
             />
           </div>
           <div className="flex gap-2">
@@ -225,11 +218,7 @@ function App() {
               placeholder="토픽 이름..."
               className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
             />
-            <button
-              type="submit"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center shadow-sm"
-              title="구독 추가"
-            >
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:scale-95 transition-all shadow-sm">
               <Plus className="w-5 h-5" />
             </button>
           </div>
@@ -240,7 +229,6 @@ function App() {
             const isSelected = selectedSub && normalizeUrl(selectedSub.serverUrl) === normalizeUrl(sub.serverUrl) && selectedSub.topic === sub.topic;
             const unreadKey = `${normalizeUrl(sub.serverUrl)}|${sub.topic}`;
             const unreadCount = unreadCounts[unreadKey] || 0;
-            
             return (
               <div
                 key={`${sub.serverUrl}-${sub.topic}-${idx}`}
@@ -251,36 +239,21 @@ function App() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 overflow-hidden">
-                    <span className={`font-semibold truncate ${isSelected ? 'text-indigo-700' : 'text-gray-700'}`}>
-                      #{sub.topic}
-                    </span>
+                    <span className={`font-semibold truncate ${isSelected ? 'text-indigo-700' : 'text-gray-700'}`}>#{sub.topic}</span>
                     {unreadCount > 0 && (
                       <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full shadow-sm animate-pulse">
                         {unreadCount}
                       </span>
                     )}
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRemoveTopic(sub);
-                    }}
-                    className="text-gray-300 hover:text-red-500 p-1 rounded-md hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
-                  >
+                  <button onClick={(e) => { e.stopPropagation(); handleRemoveTopic(sub); }} className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-all">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-                <span className="text-[11px] text-gray-400 truncate mt-1 font-mono">
-                  {normalizeUrl(sub.serverUrl).replace(/^https?:\/\//, '')}
-                </span>
+                <span className="text-[11px] text-gray-400 truncate mt-1 font-mono">{normalizeUrl(sub.serverUrl).replace(/^https?:\/\//, '')}</span>
               </div>
             )
           })}
-          {subscriptions.length === 0 && (
-            <div className="p-8 text-sm text-gray-400 text-center italic">
-              구독 중인 토픽이 없습니다.
-            </div>
-          )}
         </div>
       </div>
 
@@ -288,7 +261,7 @@ function App() {
       <div className="flex-1 flex flex-col bg-gray-50 relative overflow-hidden">
         {selectedSub ? (
           <>
-            <div className="p-5 bg-white border-b border-gray-200 flex flex-col shadow-sm z-10">
+            <div className="p-5 bg-white border-b border-gray-200 shadow-sm z-10">
               <div className="flex items-center gap-2">
                 <h2 className="text-2xl font-black text-gray-900">#{selectedSub.topic}</h2>
                 <div className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded uppercase tracking-wider">Connected</div>
@@ -307,53 +280,40 @@ function App() {
                   <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 self-start min-w-[300px] max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-300">
                     {msg.title && <div className="font-extrabold text-gray-900 mb-2 text-lg">{msg.title}</div>}
                     <div className="text-gray-700 leading-relaxed whitespace-pre-wrap break-words">{msg.message || "새로운 알림이 도착했습니다."}</div>
-                    <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-gray-50">
-                       <span className="text-[10px] font-bold text-gray-300 uppercase tracking-tighter">
-                         {new Date(msg.time * 1000).toLocaleTimeString()}
-                       </span>
-                       <span className="text-[10px] font-bold text-gray-300 uppercase tracking-tighter">
-                         {new Date(msg.time * 1000).toLocaleDateString()}
-                       </span>
+                    <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-gray-50 text-[10px] font-bold text-gray-300 uppercase">
+                       <span>{new Date(msg.time * 1000).toLocaleTimeString()}</span>
+                       <span>{new Date(msg.time * 1000).toLocaleDateString()}</span>
                     </div>
                   </div>
                 ))
               )}
             </div>
 
-            <div className="p-6 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            <div className="p-6 bg-white border-t border-gray-100">
               <form onSubmit={handlePublish} className="flex gap-3">
                 <input
                   type="text"
                   value={composeMessage}
                   onChange={(e) => setComposeMessage(e.target.value)}
                   placeholder={`#${selectedSub.topic}에 보낼 메시지 입력...`}
-                  className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-gray-50"
+                  className="flex-1 px-5 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-gray-50 outline-none transition-all"
                 />
-                <button
-                  type="submit"
-                  disabled={!composeMessage.trim()}
-                  className="px-8 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 disabled:opacity-30 disabled:active:scale-100 flex items-center gap-2 font-bold transition-all shadow-md shadow-indigo-200"
-                >
-                  <Send className="w-5 h-5" />
-                  전송
+                <button type="submit" disabled={!composeMessage.trim()} className="px-8 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 disabled:opacity-30 font-bold transition-all shadow-md shadow-indigo-200 flex items-center gap-2">
+                  <Send className="w-5 h-5" /> 전송
                 </button>
               </form>
             </div>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-300 select-none">
-            <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-              <Bell className="w-12 h-12" />
-            </div>
-            <p className="text-xl font-bold text-gray-400">사이드바에서 토픽을 선택하거나 새로 추가하세요.</p>
-            <p className="text-sm text-gray-300 mt-2">ntfy-desktop 백그라운드 서비스가 활성화되어 있습니다.</p>
+            <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6"><Bell className="w-12 h-12" /></div>
+            <p className="text-xl font-bold text-gray-400">토픽을 선택하세요.</p>
           </div>
         )}
       </div>
       
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
