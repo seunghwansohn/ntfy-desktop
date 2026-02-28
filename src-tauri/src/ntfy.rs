@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex;
 use futures_util::StreamExt;
+use reqwest_eventsource::{EventSource, Event};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NtfyMessage {
@@ -47,6 +48,7 @@ pub async fn subscribe(server_url: String, topic: String, app: AppHandle) -> Res
 
     let full_url_clone = full_url.clone();
     let app_clone = app.clone();
+    let base_url_clone = base_url.to_string();
 
     // 백그라운드 비동기 태스크 생성 (SSE 구독)
     let handle = tokio::spawn(async move {
@@ -54,51 +56,53 @@ pub async fn subscribe(server_url: String, topic: String, app: AppHandle) -> Res
         let client = reqwest::Client::new();
 
         loop {
-            // 서버 접속 및 SSE 스트림 처리
-            if let Ok(resp) = client.get(&sse_url).send().await {
-                let mut stream = resp.bytes_stream();
-                let mut buffer = String::new();
+            let req = client.get(&sse_url);
+            if let Ok(mut es) = EventSource::new(req) {
+                while let Some(event) = es.next().await {
+                    match event {
+                        Ok(Event::Open) => {
+                            println!("SSE Connection opened: {}", sse_url);
+                        }
+                        Ok(Event::Message(message)) => {
+                            if let Ok(msg) = serde_json::from_str::<NtfyMessage>(&message.data) {
+                                if msg.event == "message" {
+                                    // 1. 네이티브 윈도우 알림 띄우기
+                                    let title = msg.title.clone().unwrap_or_else(|| format!("ntfy: {}", msg.topic));
+                                    let body = msg.message.clone().unwrap_or_default();
 
-                while let Some(item) = stream.next().await {
-                    if let Ok(bytes) = item {
-                        if let Ok(text) = std::str::from_utf8(&bytes) {
-                            buffer.push_str(text);
-                            
-                            // SSE 메시지는 두 개의 줄바꿈(\n\n)으로 구분됨
-                            while let Some(idx) = buffer.find("\n\n") {
-                                let event_str = buffer[..idx].to_string();
-                                buffer = buffer[idx + 2..].to_string();
+                                    let _ = app_clone.notification()
+                                        .builder()
+                                        .title(&title)
+                                        .body(&body)
+                                        .show();
 
-                                for line in event_str.lines() {
-                                    if let Some(data) = line.strip_prefix("data: ") {
-                                        // JSON 파싱
-                                        if let Ok(msg) = serde_json::from_str::<NtfyMessage>(data) {
-                                            if msg.event == "message" {
-                                                // 1. 네이티브 윈도우 알림 띄우기
-                                                let title = msg.title.clone().unwrap_or_else(|| format!("ntfy: {}", msg.topic));
-                                                let body = msg.message.clone().unwrap_or_default();
-
-                                                let _ = app_clone.notification()
-                                                    .builder()
-                                                    .title(&title)
-                                                    .body(&body)
-                                                    .show();
-
-                                                // 2. 프론트엔드로 이벤트 발송하여 UI 업데이트
-                                                // 프론트엔드에서 서버별로 구분할 수 있도록 메시지 객체를 그대로 전달
-                                                let _ = app_clone.emit("new-message", &msg);
-                                            }
-                                        }
+                                    // 2. 프론트엔드로 이벤트 발송하여 UI 업데이트
+                                    #[derive(Serialize, Clone)]
+                                    struct FrontendMessage {
+                                        server_url: String,
+                                        message: NtfyMessage,
                                     }
+
+                                    let payload = FrontendMessage {
+                                        server_url: base_url_clone.clone(),
+                                        message: msg,
+                                    };
+
+                                    let _ = app_clone.emit("new-message", &payload);
                                 }
                             }
                         }
-                    } else {
-                        // 스트림 오류 시 루프를 빠져나가 재연결 시도
-                        break; 
+                        Err(err) => {
+                            println!("SSE Error for {}: {}", sse_url, err);
+                            es.close();
+                            break; // 루프를 빠져나가 5초 대기 후 재연결
+                        }
                     }
                 }
+            } else {
+                println!("Failed to create EventSource for {}", sse_url);
             }
+
             // 연결 끊어짐/오류 시 5초 후 재연결 시도
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
