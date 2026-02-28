@@ -1,1 +1,14 @@
 @import "tailwindcss";
+
+/* 다크 모드를 수동(.dark 클래스)으로 제어하기 위한 설정 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+  
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+}
