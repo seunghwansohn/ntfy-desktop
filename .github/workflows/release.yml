@@ -1,8 +1,11 @@
 name: Release
 
-# 1. 'v'로 시작하는 태그(예: v0.1.0)를 푸시하거나, GitHub 웹에서 수동으로 실행(workflow_dispatch)할 때 작동합니다.
+# 'v'로 시작하는 태그를 푸시하거나, main/master 브랜치에 푸시할 때, 또는 수동으로 실행할 때 작동합니다.
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
