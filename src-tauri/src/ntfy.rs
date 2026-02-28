@@ -70,11 +70,16 @@ pub async fn subscribe(server_url: String, topic: String, app: AppHandle) -> Res
                                     let title = msg.title.clone().unwrap_or_else(|| format!("ntfy: {}", msg.topic));
                                     let body = msg.message.clone().unwrap_or_default();
 
-                                    let _ = app_clone.notification()
+                                    match app_clone.notification()
                                         .builder()
                                         .title(&title)
                                         .body(&body)
-                                        .show();
+                                        // 우선순위를 높게 설정하여 시스템이 즉각 팝업을 띄우도록 유도
+                                        .show() 
+                                    {
+                                        Ok(_) => println!("Notification shown successfully"),
+                                        Err(e) => eprintln!("Failed to show notification: {}", e),
+                                    }
 
                                     // 2. 프론트엔드로 이벤트 발송하여 UI 업데이트
                                     #[derive(Serialize, Clone)]

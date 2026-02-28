@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { Send, Plus, Trash2, Bell, Server } from 'lucide-react';
 
 interface NtfyMessage {
@@ -69,14 +70,26 @@ function App() {
     }
   }, [selectedSub]);
 
-  // 마운트 시 저장된 모든 구독에 대해 백엔드 구독 시작
+  // 마운트 시 저장된 모든 구독에 대해 백엔드 구독 시작 및 알림 권한 요청
   useEffect(() => {
-    subscriptions.forEach((sub) => {
-      invoke('subscribe', { 
-        serverUrl: normalizeUrl(sub.serverUrl), 
-        topic: sub.topic 
-      }).catch(err => console.error(`Failed to subscribe to ${sub.topic}:`, err));
-    });
+    const initApp = async () => {
+      // 1. 알림 권한 확인 및 요청
+      let permission = await isPermissionGranted();
+      if (!permission) {
+        permission = await requestPermission() === 'granted';
+      }
+      console.log('Notification permission:', permission);
+
+      // 2. 기존 구독 시작
+      subscriptions.forEach((sub) => {
+        invoke('subscribe', { 
+          serverUrl: normalizeUrl(sub.serverUrl), 
+          topic: sub.topic 
+        }).catch(err => console.error(`Failed to subscribe to ${sub.topic}:`, err));
+      });
+    };
+
+    initApp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
