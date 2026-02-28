@@ -61,3 +61,11 @@ jobs:
           # npm run tauri 대신 글로벌에 설치된 cargo tauri를 사용하도록 지정
           tauriScript: cargo tauri
           args: --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
